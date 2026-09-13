@@ -6,12 +6,10 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
-  Heading2,
   Italic,
   List,
   ListOrdered,
   Palette,
-  Pilcrow,
   Redo2,
   RemoveFormatting,
   Strikethrough,
@@ -20,7 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { sanitizeRichText, richTextToPlainText } from "@/lib/cms/rich-text";
+import { richTextToPlainText, sanitizeRichText } from "@/lib/cms/rich-text";
 
 type RichTextEditorProps = {
   id: string;
@@ -31,11 +29,33 @@ type RichTextEditorProps = {
   maxLength?: number;
 };
 
-type Command = "bold" | "italic" | "underline" | "strikeThrough" | "insertUnorderedList" | "insertOrderedList" | "justifyLeft" | "justifyCenter" | "justifyRight" | "removeFormat";
+type Command =
+  | "bold"
+  | "italic"
+  | "underline"
+  | "strikeThrough"
+  | "insertUnorderedList"
+  | "insertOrderedList"
+  | "justifyLeft"
+  | "justifyCenter"
+  | "justifyRight"
+  | "removeFormat"
+  | "undo"
+  | "redo"
+  | "foreColor";
 
 function ToolbarButton({ label, icon: Icon, onClick }: { label: string; icon: typeof Bold; onClick: () => void }) {
   return (
-    <Button type="button" variant="ghost" size="icon" className="size-9 shrink-0" onMouseDown={(event) => event.preventDefault()} onClick={onClick} aria-label={label} title={label}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="size-9 shrink-0"
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
       <Icon className="size-4" aria-hidden="true" />
     </Button>
   );
@@ -43,19 +63,32 @@ function ToolbarButton({ label, icon: Icon, onClick }: { label: string; icon: ty
 
 export function RichTextEditor({ id, label, placeholder, value, onChange, maxLength = 5000 }: RichTextEditorProps) {
   const editorRef = React.useRef<HTMLDivElement>(null);
-  const colorRef = React.useRef<HTMLInputElement>(null);
-  const lastExternalValueRef = React.useRef(value);
-  const [characterCount, setCharacterCount] = React.useState(() => richTextToPlainText(value).length);
+  const lastValueRef = React.useRef(value);
+  const characterCount = richTextToPlainText(value).length;
 
-  React.useLayoutEffect(() => {
-    if (!editorRef.current || lastExternalValueRef.current === value) return;
-    editorRef.current.innerHTML = value;
-    lastExternalValueRef.current = value;
-    setCharacterCount(richTextToPlainText(value).length);
+  React.useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || lastValueRef.current === value || editor.innerHTML === value) return;
+    editor.innerHTML = value;
+    lastValueRef.current = value;
   }, [value]);
 
   function focusEditor() {
     editorRef.current?.focus();
+  }
+
+  function handleInput() {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const sanitized = sanitizeRichText(editor.innerHTML);
+    const plainText = richTextToPlainText(sanitized);
+    if (plainText.length > maxLength) {
+      editor.innerHTML = lastValueRef.current;
+      return;
+    }
+    if (editor.innerHTML !== sanitized) editor.innerHTML = sanitized;
+    lastValueRef.current = sanitized;
+    onChange(sanitized);
   }
 
   function runCommand(command: Command, commandValue?: string) {
@@ -65,29 +98,7 @@ export function RichTextEditor({ id, label, placeholder, value, onChange, maxLen
   }
 
   function formatHeading(value: string) {
-    focusEditor();
-    document.execCommand("formatBlock", false, value);
-    handleInput();
-  }
-
-  function handleColorChange(event: React.ChangeEvent<HTMLInputElement>) {
-    runCommand("foreColor" as Command, event.target.value);
-  }
-
-  function handleInput() {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const sanitized = sanitizeRichText(editor.innerHTML);
-    const plainText = richTextToPlainText(sanitized);
-    if (plainText.length > maxLength) {
-      editor.innerHTML = lastExternalValueRef.current;
-      setCharacterCount(richTextToPlainText(lastExternalValueRef.current).length);
-      return;
-    }
-    if (editor.innerHTML !== sanitized) editor.innerHTML = sanitized;
-    lastExternalValueRef.current = sanitized;
-    setCharacterCount(plainText.length);
-    onChange(sanitized);
+    runCommand("formatBlock", value);
   }
 
   function handlePaste(event: React.ClipboardEvent<HTMLDivElement>) {
@@ -121,13 +132,12 @@ export function RichTextEditor({ id, label, placeholder, value, onChange, maxLen
           <ToolbarButton label="Align right" icon={AlignRight} onClick={() => runCommand("justifyRight")} />
           <span className="relative mx-0.5 inline-flex size-9 items-center justify-center rounded-md hover:bg-muted" title="Text color">
             <Palette className="size-4" aria-hidden="true" />
-            <input ref={colorRef} type="color" aria-label="Text color" defaultValue="#0f766e" onChange={handleColorChange} className="absolute inset-0 cursor-pointer opacity-0" />
+            <input type="color" aria-label="Text color" defaultValue="#0f766e" onChange={(event) => runCommand("foreColor", event.target.value)} className="absolute inset-0 cursor-pointer opacity-0" />
           </span>
           <span className="mx-1 h-6 w-px bg-border" aria-hidden="true" />
-          <ToolbarButton label="Undo" icon={Undo2} onClick={() => runCommand("removeFormat" as Command)} />
-          <ToolbarButton label="Redo" icon={Redo2} onClick={() => document.execCommand("redo")} />
+          <ToolbarButton label="Undo" icon={Undo2} onClick={() => runCommand("undo")} />
+          <ToolbarButton label="Redo" icon={Redo2} onClick={() => runCommand("redo")} />
           <ToolbarButton label="Remove formatting" icon={RemoveFormatting} onClick={() => runCommand("removeFormat")} />
-          <span className="sr-only"><Heading2 /><Pilcrow /></span>
         </div>
         <div
           ref={editorRef}
