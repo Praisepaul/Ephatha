@@ -46,16 +46,7 @@ type Command =
 
 function ToolbarButton({ label, icon: Icon, onClick }: { label: string; icon: typeof Bold; onClick: () => void }) {
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      className="size-9 shrink-0"
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-    >
+    <Button type="button" variant="ghost" size="icon" className="size-9 shrink-0" onMouseDown={(event) => event.preventDefault()} onClick={onClick} aria-label={label} title={label}>
       <Icon className="size-4" aria-hidden="true" />
     </Button>
   );
@@ -98,7 +89,9 @@ export function RichTextEditor({ id, label, placeholder, value, onChange, maxLen
   }
 
   function formatHeading(value: string) {
-    runCommand("formatBlock", value);
+    focusEditor();
+    document.execCommand("formatBlock", false, value);
+    handleInput();
   }
 
   function handlePaste(event: React.ClipboardEvent<HTMLDivElement>) {
