@@ -71,12 +71,17 @@ Functions: `isGoogleCalendarConfigured`, `createGoogleCalendarOAuthState`, `cons
 
 ## CMS
 - `lib/cms/site-settings-repository.ts`: therapist profile draft/publish and booking settings persistence.
+- `lib/cms/rich-text.ts`: shared rich-text sanitization, normalization and plain-text length measurement boundary.
 - `lib/cms/services-repository.ts`: persisted services.
 - `lib/cms/availability-repository.ts`: persisted availability.
-- Profile UI: `components/admin/profile/profile-form.tsx`, `profile-content-fields.tsx`; public profile components under `components/public/profile/`.
+- Profile UI: `components/admin/profile/profile-form.tsx`, `profile-content-fields.tsx`, `rich-text-editor.tsx`; public profile components under `components/public/profile/`.
+- `components/public/profile/rich-text-content.tsx` is the public rich-text rendering boundary.
 - Admin profile APIs: `app/api/admin/profile/route.ts`, `app/api/admin/profile/image/route.ts`; public image API: `app/api/profile/image/route.ts`.
 - Mongo `site_settings`, `cms_services`, `cms_availability`, GridFS `profile_media.files/chunks`.
+- Narrative profile fields support paragraph/heading formatting, bold, italic, underline, strikethrough, lists, alignment and text color. Rich text is stored as sanitized HTML inside the existing `site_settings` profile documents; no new collection or external editor dependency is introduced.
 - Drafts are private; publishing is explicit; empty public profile sections stay hidden.
+- Existing plain-text profile values remain compatible without a data migration. Server-side normalization sanitizes stored values, and public rendering sanitizes again before HTML rendering.
+- Draft preview uses the same public rich-text renderer as the published profile.
 
 ## Booking / appointments
 ### Booking modules
@@ -150,13 +155,14 @@ Modules: `lib/calendar/google-calendar-config.ts`, `google-calendar-types.ts`, `
 10. `next.config.ts` provides MIME-sniffing, clickjacking, referrer, Permissions-Policy, CSP baseline, production HSTS and disables `X-Powered-By`.
 11. Public legal pages contain no admin-session dependency and are intended to be crawlable for Google OAuth brand/privacy verification.
 12. Theme preference is non-sensitive browser-local UI state; it is not stored in MongoDB or sent to application APIs.
+13. Rich-text profile content is sanitized at the CMS normalization boundary and again at public rendering; only allowlisted markup, safe links and constrained text styles are rendered.
 
 ## Legal / privacy architecture
 - `app/privacy-policy/page.tsx` — formal Privacy Policy covering personal data, GDPR-style rights, retention/deletion, international transfers, security, minors, and Google Calendar user data.
 - `app/terms/page.tsx` — formal Terms of Service covering booking, cancellation, online sessions, professional licensing, cross-border services, acceptable use, liability, and disputes.
 - `app/cookie-policy/page.tsx` — formal Cookie Policy covering essential security/authentication cookies and the absence of advertising/behavioral tracking cookies in the core application.
 - `app/data-deletion/page.tsx` — formal Data Deletion Policy and public deletion-request instructions, including Google Calendar disconnect/deletion boundaries.
-- Privacy/legal contact: `gracepaulaslp@gmail.com`.
+- Privacy/legal contact: `gracepaula@gmail.com`.
 - Operator: **Grace Valookkaran Paul (Grace V Paul)**, RCI Central Rehabilitation Register (CRR) No. **A92329**, registered as an **Audiologist and Speech-Language Pathologist**.
 - Professional qualifications recorded in the policy: BASLP (2022) and M.Sc. Speech-Language Pathology (2024), with the additional qualification recorded by RCI on February 24, 2025.
 - RCI registration date: September 13, 2023; stated validity through February 22, 2030, subject to RCI requirements.
@@ -176,8 +182,9 @@ Modules: `lib/calendar/google-calendar-config.ts`, `google-calendar-types.ts`, `
 - Phase 18 automated testing/CI: **Removed** at the project owner's request. Temporary regression tests, browser smoke tests, Playwright configuration and CI workflow are no longer part of the application architecture.
 - Phase 19 production deployment: **Planned** — Vercel-only hosting is the current deployment architecture; MongoDB Atlas remains authoritative; Google Cloud OAuth remains the calendar integration. Cloudflare is optional only if a custom domain is introduced later.
 - Phase 20 handover: **Planned**.
-- Legal/privacy policy milestone: **Implemented on feature branch `feature/legal-policies`; requires owner review of legal identity/contact details and local/preview QA before merge to `main`.**
-- Theme milestone: **Implemented on feature branch `feature/dark-mode`; first-use theme discovery hint added; requires owner review and manual light/dark/system QA before merge to `main`.**
+- Legal/privacy policy milestone: **Implemented and merged to `main`; current legal pages are part of the production source of truth.**
+- Theme milestone: **Implemented and merged to `main`; first-use theme discovery hint is part of the production source of truth.**
+- Profile rich-text CMS milestone: **Implemented on `feature/profile-rich-text-editor`; pending owner review and manual QA before merge to `main`.**
 
 ## Environment configuration
 Admin: `GRACE_ADMIN_USERNAME`, `GRACE_ADMIN_PASSWORD_HASH`, `GRACE_ADMIN_SESSION_SECRET`.
