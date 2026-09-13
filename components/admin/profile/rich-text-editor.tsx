@@ -7,6 +7,7 @@ import {
   AlignRight,
   Bold,
   Italic,
+  Link2,
   List,
   ListOrdered,
   Palette,
@@ -42,7 +43,8 @@ type Command =
   | "removeFormat"
   | "undo"
   | "redo"
-  | "foreColor";
+  | "foreColor"
+  | "createLink";
 
 function ToolbarButton({ label, icon: Icon, onClick }: { label: string; icon: typeof Bold; onClick: () => void }) {
   return (
@@ -97,6 +99,16 @@ export function RichTextEditor({ id, label, placeholder, value, onChange, maxLen
     handleInput();
   }
 
+  function insertLink() {
+    focusEditor();
+    const url = window.prompt("Enter a link address");
+    if (!url) return;
+    const trimmed = url.trim();
+    if (!/^(https?:\/\/|mailto:|tel:|\/[^/])/i.test(trimmed)) return;
+    document.execCommand("createLink", false, trimmed);
+    handleInput();
+  }
+
   function handlePaste(event: React.ClipboardEvent<HTMLDivElement>) {
     event.preventDefault();
     const text = event.clipboardData.getData("text/plain");
@@ -130,6 +142,7 @@ export function RichTextEditor({ id, label, placeholder, value, onChange, maxLen
             <Palette className="size-4" aria-hidden="true" />
             <input type="color" aria-label="Text color" defaultValue="#0f766e" onChange={(event) => runCommand("foreColor", event.target.value)} className="absolute inset-0 cursor-pointer opacity-0" />
           </span>
+          <ToolbarButton label="Add link" icon={Link2} onClick={insertLink} />
           <span className="mx-1 h-6 w-px bg-border" aria-hidden="true" />
           <ToolbarButton label="Undo" icon={Undo2} onClick={() => runCommand("undo")} />
           <ToolbarButton label="Redo" icon={Redo2} onClick={() => runCommand("redo")} />
