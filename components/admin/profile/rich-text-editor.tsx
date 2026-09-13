@@ -84,6 +84,9 @@ export function RichTextEditor({ id, label, placeholder, value, onChange, maxLen
 
   function runCommand(command: Command, commandValue?: string) {
     focusEditor();
+    if (command !== "undo" && command !== "redo" && command !== "removeFormat") {
+      document.execCommand("styleWithCSS", false, "true");
+    }
     document.execCommand(command, false, commandValue);
     handleInput();
   }
