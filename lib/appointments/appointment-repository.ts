@@ -9,203 +9,23 @@ const availabilityRevisionCollection = "availability_revisions";
 const appointmentRevisionCollection = "appointment_revisions";
 const availabilityRevisionId = "public-booking";
 const appointmentRevisionId = "admin-appointments";
-
 type BookingLockDocument = { _id?: ObjectId; bucketStart: Date; confirmationToken: string };
 type RevisionDocument = { _id: string; revision: string; updatedAt: Date };
 
-export async function ensureAppointmentIndexes() {
-  const db = await getMongoDb();
-  await db.collection<AppointmentDocument>(appointmentsCollection).createIndexes([
-    { key: { confirmationToken: 1 }, unique: true, name: "confirmationToken_unique" },
-    { key: { idempotencyKey: 1 }, unique: true, name: "idempotencyKey_unique" },
-    { key: { startAt: 1, endAt: 1, status: 1 }, name: "active_interval_lookup" },
-    { key: { status: 1, startAt: 1 }, name: "status_start_lookup" },
-    { key: { "patient.email": 1, startAt: -1 }, name: "patient_email_start_lookup" },
-  ]);
-  await db.collection(bookingLocksCollection).createIndex({ bucketStart: 1 }, { unique: true, name: "bucketStart_unique" });
-}
-
-export async function findAppointmentByIdempotencyKey(idempotencyKey: string) {
-  const db = await getMongoDb();
-  return db.collection<AppointmentDocument>(appointmentsCollection).findOne({ idempotencyKey });
-}
-
-export async function findAppointmentByToken(confirmationToken: string) {
-  const db = await getMongoDb();
-  return db.collection<AppointmentDocument>(appointmentsCollection).findOne({ confirmationToken });
-}
-
-export async function findActiveAppointmentsOverlapping(startAt: Date, endAt: Date) {
-  const db = await getMongoDb();
-  return db.collection<AppointmentDocument>(appointmentsCollection).find({
-    status: "confirmed",
-    startAt: { $lt: endAt },
-    endAt: { $gt: startAt },
-  }).toArray();
-}
-
-export async function findAdminAppointments(input: {
-  status?: AppointmentStatus;
-  search?: string;
-  from?: Date;
-  to?: Date;
-  limit?: number;
-}) {
-  const db = await getMongoDb();
-  const filter: Record<string, unknown> = {};
-  if (input.status) filter.status = input.status;
-  if (input.from || input.to) filter.startAt = { ...(input.from ? { $gte: input.from } : {}), ...(input.to ? { $lt: input.to } : {}) };
-  if (input.search?.trim()) {
-    const escaped = input.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(escaped, "i");
-    filter.$or = [{ "patient.name": regex }, { "patient.email": regex }, { "service.name": regex }, { confirmationToken: regex }];
-  }
-  return db.collection<AppointmentDocument>(appointmentsCollection).find(filter).sort({ startAt: 1 }).limit(Math.min(input.limit ?? 200, 500)).toArray();
-}
-
-function createRevision() {
-  return createHash("sha256").update(`${Date.now()}:${randomUUID()}`).digest("hex");
-}
-
-export async function getAppointmentRevision(): Promise<string> {
-  const db = await getMongoDb();
-  const revision = await db.collection<RevisionDocument>(appointmentRevisionCollection).findOne(
-    { _id: appointmentRevisionId },
-    { projection: { revision: 1 } },
-  );
-  return revision?.revision ?? "initial";
-}
-
-export async function bumpAppointmentRevision(session?: ClientSession): Promise<string> {
-  const db = await getMongoDb();
-  const revision = createRevision();
-  await db.collection<RevisionDocument>(appointmentRevisionCollection).updateOne(
-    { _id: appointmentRevisionId },
-    { $set: { revision, updatedAt: new Date() } },
-    { upsert: true, ...(session ? { session } : {}) },
-  );
-  return revision;
-}
-
-export async function updateAppointmentStatus(input: { confirmationToken: string; status: Extract<AppointmentStatus, "completed" | "no_show"> }) {
-  const db = await getMongoDb();
-  const result = await db.collection<AppointmentDocument>(appointmentsCollection).findOneAndUpdate(
-    { confirmationToken: input.confirmationToken, status: "confirmed" },
-    { $set: { status: input.status, updatedAt: new Date() } },
-    { returnDocument: "after" },
-  );
-  if (result) await bumpAppointmentRevision();
-  return result;
-}
-
-function createAvailabilityRevision() {
-  return createHash("sha256").update(`${Date.now()}:${randomUUID()}`).digest("hex");
-}
-
-export async function getBookingLocksRevision(): Promise<string> {
-  const db = await getMongoDb();
-  const revision = await db.collection<RevisionDocument>(availabilityRevisionCollection).findOne(
-    { _id: availabilityRevisionId },
-    { projection: { revision: 1 } },
-  );
-  if (revision?.revision) return revision.revision;
-
-  const collection = db.collection<BookingLockDocument>(bookingLocksCollection);
-  const [count, latest] = await Promise.all([
-    collection.countDocuments(),
-    collection.findOne({}, { projection: { _id: 1 }, sort: { _id: -1 } }),
-  ]);
-  return createHash("sha256").update(`${count}:${latest?._id?.toHexString() ?? "none"}`).digest("hex");
-}
-
-export async function bumpBookingLocksRevision(session: ClientSession): Promise<string> {
-  const db = await getMongoDb();
-  const revision = createAvailabilityRevision();
-  await db.collection<RevisionDocument>(availabilityRevisionCollection).updateOne(
-    { _id: availabilityRevisionId },
-    { $set: { revision, updatedAt: new Date() } },
-    { upsert: true, session },
-  );
-  return revision;
-}
-
-export async function bumpPublicAvailabilityRevision(): Promise<string> {
-  const db = await getMongoDb();
-  const revision = createAvailabilityRevision();
-  await db.collection<RevisionDocument>(availabilityRevisionCollection).updateOne(
-    { _id: availabilityRevisionId },
-    { $set: { revision, updatedAt: new Date() } },
-    { upsert: true },
-  );
-  return revision;
-}
-
-export async function updateGoogleCalendarSyncStatus(input: {
-  confirmationToken: string;
-  syncStatus: GoogleCalendarSyncStatus;
-  eventId?: string;
-  error?: string;
-  meetJoinUrl?: string;
-}) {
-  const db = await getMongoDb();
-  const now = new Date();
-  const set: Record<string, unknown> = {
-    "googleCalendar.syncStatus": input.syncStatus,
-    "googleCalendar.lastSyncedAt": now,
-  };
-  if (input.eventId) set["googleCalendar.eventId"] = input.eventId;
-  if (input.meetJoinUrl) set["googleMeet.joinUrl"] = input.meetJoinUrl;
-  const update: { $set: Record<string, unknown>; $unset?: Record<string, ""> } = { $set: set };
-  if (input.error) set["googleCalendar.lastSyncError"] = input.error;
-  else update.$unset = { "googleCalendar.lastSyncError": "" };
-  const result = await db.collection<AppointmentDocument>(appointmentsCollection).updateOne({ confirmationToken: input.confirmationToken }, update);
-  if (result.modifiedCount > 0) await bumpAppointmentRevision();
-}
-
-export async function updateAppointmentSchedule(input: { confirmationToken: string; startAt: Date; endAt: Date }) {
-  const db = await getMongoDb();
-  const result = await db.collection<AppointmentDocument>(appointmentsCollection).findOneAndUpdate(
-    { confirmationToken: input.confirmationToken, status: "confirmed" },
-    { $set: { startAt: input.startAt, endAt: input.endAt, updatedAt: new Date() } },
-    { returnDocument: "after" },
-  );
-  if (result) await bumpAppointmentRevision();
-  return result;
-}
-
-export function toAppointmentPublicView(appointment: AppointmentDocument): AppointmentPublicView {
-  return {
-    confirmationToken: appointment.confirmationToken,
-    status: appointment.status,
-    service: appointment.service,
-    patientName: appointment.patient.name,
-    patientEmail: appointment.patient.email,
-    startAt: appointment.startAt.toISOString(),
-    endAt: appointment.endAt.toISOString(),
-    timezone: appointment.timezone,
-    createdAt: appointment.createdAt.toISOString(),
-    ...(appointment.cancelledAt ? { cancelledAt: appointment.cancelledAt.toISOString() } : {}),
-    ...(appointment.googleMeet ? { googleMeet: appointment.googleMeet } : {}),
-  };
-}
-
-export async function cancelAppointment(confirmationToken: string): Promise<AppointmentDocument | null> {
-  const client = await getMongoClient();
-  const db = await getMongoDb();
-  const now = new Date();
-  let cancelled: AppointmentDocument | null = null;
-
-  await client.withSession(async (session) => session.withTransaction(async (transactionSession: ClientSession) => {
-    const result = await db.collection<AppointmentDocument>(appointmentsCollection).findOneAndUpdate(
-      { confirmationToken, status: "confirmed", startAt: { $gt: now } },
-      { $set: { status: "cancelled", cancelledAt: now, updatedAt: now } },
-      { returnDocument: "after", session: transactionSession },
-    );
-    if (!result) return;
-    cancelled = result;
-    await db.collection(bookingLocksCollection).deleteMany({ confirmationToken }, { session: transactionSession });
-    await bumpBookingLocksRevision(transactionSession);
-    await bumpAppointmentRevision(transactionSession);
-  }));
-  return cancelled;
-}
+export async function ensureAppointmentIndexes() { const db = await getMongoDb(); await db.collection<AppointmentDocument>(appointmentsCollection).createIndexes([{ key: { confirmationToken: 1 }, unique: true, name: "confirmationToken_unique" }, { key: { idempotencyKey: 1 }, unique: true, name: "idempotencyKey_unique" }, { key: { startAt: 1, endAt: 1, status: 1 }, name: "active_interval_lookup" }, { key: { status: 1, startAt: 1 }, name: "status_start_lookup" }, { key: { "patient.email": 1, startAt: -1 }, name: "patient_email_start_lookup" }]); await db.collection(bookingLocksCollection).createIndex({ bucketStart: 1 }, { unique: true, name: "bucketStart_unique" }); }
+export async function findAppointmentByIdempotencyKey(idempotencyKey: string) { const db = await getMongoDb(); return db.collection<AppointmentDocument>(appointmentsCollection).findOne({ idempotencyKey }); }
+export async function findAppointmentByToken(confirmationToken: string) { const db = await getMongoDb(); return db.collection<AppointmentDocument>(appointmentsCollection).findOne({ confirmationToken }); }
+export async function findActiveAppointmentsOverlapping(startAt: Date, endAt: Date) { const db = await getMongoDb(); return db.collection<AppointmentDocument>(appointmentsCollection).find({ status: "confirmed", startAt: { $lt: endAt }, endAt: { $gt: startAt } }).toArray(); }
+export async function findAdminAppointments(input: { status?: AppointmentStatus; search?: string; from?: Date; to?: Date; limit?: number }) { const db = await getMongoDb(); const filter: Record<string, unknown> = {}; if (input.status) filter.status = input.status; if (input.from || input.to) filter.startAt = { ...(input.from ? { $gte: input.from } : {}), ...(input.to ? { $lt: input.to } : {}) }; if (input.search?.trim()) { const escaped = input.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); const regex = new RegExp(escaped, "i"); filter.$or = [{ "patient.name": regex }, { "patient.email": regex }, { "patient.phoneNumber": regex }, { "patient.country": regex }, { "service.name": regex }, { confirmationToken: regex }]; } return db.collection<AppointmentDocument>(appointmentsCollection).find(filter).sort({ startAt: 1 }).limit(Math.min(input.limit ?? 200, 500)).toArray(); }
+function createRevision() { return createHash("sha256").update(`${Date.now()}:${randomUUID()}`).digest("hex"); }
+export async function getAppointmentRevision(): Promise<string> { const db = await getMongoDb(); const revision = await db.collection<RevisionDocument>(appointmentRevisionCollection).findOne({ _id: appointmentRevisionId }, { projection: { revision: 1 } }); return revision?.revision ?? "initial"; }
+export async function bumpAppointmentRevision(session?: ClientSession): Promise<string> { const db = await getMongoDb(); const revision = createRevision(); await db.collection<RevisionDocument>(appointmentRevisionCollection).updateOne({ _id: appointmentRevisionId }, { $set: { revision, updatedAt: new Date() } }, { upsert: true, ...(session ? { session } : {}) }); return revision; }
+export async function updateAppointmentStatus(input: { confirmationToken: string; status: Extract<AppointmentStatus, "completed" | "no_show"> }) { const db = await getMongoDb(); const result = await db.collection<AppointmentDocument>(appointmentsCollection).findOneAndUpdate({ confirmationToken: input.confirmationToken, status: "confirmed" }, { $set: { status: input.status, updatedAt: new Date() } }, { returnDocument: "after" }); if (result) await bumpAppointmentRevision(); return result; }
+function createAvailabilityRevision() { return createHash("sha256").update(`${Date.now()}:${randomUUID()}`).digest("hex"); }
+export async function getBookingLocksRevision(): Promise<string> { const db = await getMongoDb(); const revision = await db.collection<RevisionDocument>(availabilityRevisionCollection).findOne({ _id: availabilityRevisionId }, { projection: { revision: 1 } }); if (revision?.revision) return revision.revision; const collection = db.collection<BookingLockDocument>(bookingLocksCollection); const [count, latest] = await Promise.all([collection.countDocuments(), collection.findOne({}, { projection: { _id: 1 }, sort: { _id: -1 } })]); return createHash("sha256").update(`${count}:${latest?._id?.toHexString() ?? "none"}`).digest("hex"); }
+export async function bumpBookingLocksRevision(session: ClientSession): Promise<string> { const db = await getMongoDb(); const revision = createAvailabilityRevision(); await db.collection<RevisionDocument>(availabilityRevisionCollection).updateOne({ _id: availabilityRevisionId }, { $set: { revision, updatedAt: new Date() } }, { upsert: true, session }); return revision; }
+export async function bumpPublicAvailabilityRevision(): Promise<string> { const db = await getMongoDb(); const revision = createAvailabilityRevision(); await db.collection<RevisionDocument>(availabilityRevisionCollection).updateOne({ _id: availabilityRevisionId }, { $set: { revision, updatedAt: new Date() } }, { upsert: true }); return revision; }
+export async function updateGoogleCalendarSyncStatus(input: { confirmationToken: string; syncStatus: GoogleCalendarSyncStatus; eventId?: string; error?: string; meetJoinUrl?: string }) { const db = await getMongoDb(); const now = new Date(); const set: Record<string, unknown> = { "googleCalendar.syncStatus": input.syncStatus, "googleCalendar.lastSyncedAt": now }; if (input.eventId) set["googleCalendar.eventId"] = input.eventId; if (input.meetJoinUrl) set["googleMeet.joinUrl"] = input.meetJoinUrl; const update: { $set: Record<string, unknown>; $unset?: Record<string, ""> } = { $set: set }; if (input.error) set["googleCalendar.lastSyncError"] = input.error; else update.$unset = { "googleCalendar.lastSyncError": "" }; const result = await db.collection<AppointmentDocument>(appointmentsCollection).updateOne({ confirmationToken: input.confirmationToken }, update); if (result.modifiedCount > 0) await bumpAppointmentRevision(); }
+export async function updateAppointmentSchedule(input: { confirmationToken: string; startAt: Date; endAt: Date }) { const db = await getMongoDb(); const result = await db.collection<AppointmentDocument>(appointmentsCollection).findOneAndUpdate({ confirmationToken: input.confirmationToken, status: "confirmed" }, { $set: { startAt: input.startAt, endAt: input.endAt, updatedAt: new Date() } }, { returnDocument: "after" }); if (result) await bumpAppointmentRevision(); return result; }
+export function toAppointmentPublicView(appointment: AppointmentDocument): AppointmentPublicView { return { confirmationToken: appointment.confirmationToken, status: appointment.status, service: appointment.service, patientName: appointment.patient.name, patientEmail: appointment.patient.email, ...(appointment.patient.phoneCountryCode ? { patientPhoneCountryCode: appointment.patient.phoneCountryCode } : {}), ...(appointment.patient.phoneNumber ? { patientPhoneNumber: appointment.patient.phoneNumber } : {}), ...(appointment.patient.country ? { patientCountry: appointment.patient.country } : {}), startAt: appointment.startAt.toISOString(), endAt: appointment.endAt.toISOString(), timezone: appointment.timezone, createdAt: appointment.createdAt.toISOString(), ...(appointment.cancelledAt ? { cancelledAt: appointment.cancelledAt.toISOString() } : {}), ...(appointment.googleMeet ? { googleMeet: appointment.googleMeet } : {}) }; }
+export async function cancelAppointment(confirmationToken: string): Promise<AppointmentDocument | null> { const client = await getMongoClient(); const db = await getMongoDb(); const now = new Date(); let cancelled: AppointmentDocument | null = null; await client.withSession(async (session) => session.withTransaction(async (transactionSession: ClientSession) => { const result = await db.collection<AppointmentDocument>(appointmentsCollection).findOneAndUpdate({ confirmationToken, status: "confirmed", startAt: { $gt: now } }, { $set: { status: "cancelled", cancelledAt: now, updatedAt: now } }, { returnDocument: "after", session: transactionSession }); if (!result) return; cancelled = result; await db.collection(bookingLocksCollection).deleteMany({ confirmationToken }, { session: transactionSession }); await bumpBookingLocksRevision(transactionSession); await bumpAppointmentRevision(transactionSession); })); return cancelled; }
