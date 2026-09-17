@@ -1,14 +1,7 @@
 import type { ObjectId } from "mongodb";
 
-export const appointmentStatuses = [
-  "confirmed",
-  "cancelled",
-  "completed",
-  "no_show",
-] as const;
-
+export const appointmentStatuses = ["confirmed", "cancelled", "completed", "no_show"] as const;
 export type AppointmentStatus = (typeof appointmentStatuses)[number];
-
 export const googleCalendarSyncStatuses = ["pending", "synced", "failed", "not_connected"] as const;
 export type GoogleCalendarSyncStatus = (typeof googleCalendarSyncStatuses)[number];
 
@@ -17,32 +10,16 @@ export type AppointmentDocument = {
   confirmationToken: string;
   idempotencyKey: string;
   status: AppointmentStatus;
-  service: {
-    id: string;
-    name: string;
-    durationMinutes: number;
-    online: boolean;
-    inPerson: boolean;
-  };
-  patient: {
-    name: string;
-    email: string;
-  };
+  service: { id: string; name: string; durationMinutes: number; online: boolean; inPerson: boolean };
+  patient: { name: string; email: string; phoneCountryCode?: string; phoneNumber?: string; country?: string };
   startAt: Date;
   endAt: Date;
   timezone: string;
   createdAt: Date;
   updatedAt: Date;
   cancelledAt?: Date;
-  googleCalendar?: {
-    eventId?: string;
-    syncStatus: GoogleCalendarSyncStatus;
-    lastSyncedAt?: Date;
-    lastSyncError?: string;
-  };
-  googleMeet?: {
-    joinUrl?: string;
-  };
+  googleCalendar?: { eventId?: string; syncStatus: GoogleCalendarSyncStatus; lastSyncedAt?: Date; lastSyncError?: string };
+  googleMeet?: { joinUrl?: string };
 };
 
 export type AppointmentPublicView = {
@@ -51,14 +28,15 @@ export type AppointmentPublicView = {
   service: AppointmentDocument["service"];
   patientName: string;
   patientEmail: string;
+  patientPhoneCountryCode?: string;
+  patientPhoneNumber?: string;
+  patientCountry?: string;
   startAt: string;
   endAt: string;
   timezone: string;
   createdAt: string;
   cancelledAt?: string;
-  googleMeet?: {
-    joinUrl?: string;
-  };
+  googleMeet?: { joinUrl?: string };
 };
 
 export function isAppointmentStatus(value: unknown): value is AppointmentStatus {
