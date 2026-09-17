@@ -8,172 +8,25 @@ import { useDataSync } from "@/lib/ui/use-data-sync";
 import { AdminAppointmentScheduling, type AdminAppointmentSchedulingTarget } from "./admin-appointment-scheduling";
 
 const statuses: Array<AppointmentStatus | "all"> = ["all", "confirmed", "completed", "no_show", "cancelled"];
-
-type AdminAppointment = {
-  id?: string;
-  confirmationToken: string;
-  status: AppointmentStatus;
-  service: { id?: string; name: string; durationMinutes: number; online?: boolean; inPerson?: boolean };
-  patientName: string;
-  patientEmail: string;
-  startAt: string;
-  endAt: string;
-  timezone: string;
-  googleCalendar?: { eventId?: string; syncStatus: string; lastSyncedAt?: string; lastSyncError?: string };
-  googleMeet?: { joinUrl?: string };
-};
-
-function formatDateTime(value: string, timezone: string) {
-  return new Intl.DateTimeFormat("en", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: timezone }).format(new Date(value));
-}
-
-function formatDay(value: string, timezone: string) {
-  return new Intl.DateTimeFormat("en", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: timezone }).format(new Date(value));
-}
-
-function nextUtcDay(value: string) {
-  const date = new Date(`${value}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + 1);
-  return date.toISOString();
-}
+type AdminAppointment = { id?: string; confirmationToken: string; status: AppointmentStatus; service: { id?: string; name: string; durationMinutes: number; online?: boolean; inPerson?: boolean }; patientName: string; patientEmail: string; patientPhoneCountryCode?: string; patientPhoneNumber?: string; patientCountry?: string; startAt: string; endAt: string; timezone: string; googleCalendar?: { eventId?: string; syncStatus: string; lastSyncedAt?: string; lastSyncError?: string }; googleMeet?: { joinUrl?: string } };
+function formatDateTime(value: string, timezone: string) { return new Intl.DateTimeFormat("en", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: timezone }).format(new Date(value)); }
+function formatDay(value: string, timezone: string) { return new Intl.DateTimeFormat("en", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: timezone }).format(new Date(value)); }
+function nextUtcDay(value: string) { const date = new Date(`${value}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + 1); return date.toISOString(); }
 
 export function AdminAppointmentsManager() {
-  const [appointments, setAppointments] = useState<AdminAppointment[]>([]);
-  const [status, setStatus] = useState<AppointmentStatus | "all">("all");
-  const [search, setSearch] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [workingToken, setWorkingToken] = useState<string | null>(null);
-  const [schedulingTarget, setSchedulingTarget] = useState<AdminAppointmentSchedulingTarget | null>(null);
-
-  const loadAppointments = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams();
-      if (status !== "all") params.set("status", status);
-      if (search.trim()) params.set("search", search.trim());
-      if (fromDate) params.set("from", new Date(`${fromDate}T00:00:00Z`).toISOString());
-      if (toDate) params.set("to", nextUtcDay(toDate));
-      const response = await fetch(`/api/admin/appointments?${params.toString()}`, { cache: "no-store" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "We couldn't load appointments.");
-      setAppointments(data.appointments as AdminAppointment[]);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "We couldn't load appointments.");
-    } finally {
-      setLoading(false);
-    }
-  }, [fromDate, search, status, toDate]);
-
+  const [appointments, setAppointments] = useState<AdminAppointment[]>([]); const [status, setStatus] = useState<AppointmentStatus | "all">("all"); const [search, setSearch] = useState(""); const [fromDate, setFromDate] = useState(""); const [toDate, setToDate] = useState(""); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [notice, setNotice] = useState<string | null>(null); const [workingToken, setWorkingToken] = useState<string | null>(null); const [schedulingTarget, setSchedulingTarget] = useState<AdminAppointmentSchedulingTarget | null>(null);
+  const loadAppointments = useCallback(async () => { setLoading(true); setError(null); try { const params = new URLSearchParams(); if (status !== "all") params.set("status", status); if (search.trim()) params.set("search", search.trim()); if (fromDate) params.set("from", new Date(`${fromDate}T00:00:00Z`).toISOString()); if (toDate) params.set("to", nextUtcDay(toDate)); const response = await fetch(`/api/admin/appointments?${params.toString()}`, { cache: "no-store" }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "We couldn't load appointments."); setAppointments(data.appointments as AdminAppointment[]); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "We couldn't load appointments."); } finally { setLoading(false); } }, [fromDate, search, status, toDate]);
   const { refresh, refreshing } = useDataSync({ revisionUrl: "/api/admin/appointments/revision", onRefresh: loadAppointments });
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => { void loadAppointments(); }, 0);
-    return () => window.clearTimeout(timer);
-  }, [loadAppointments]);
-
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 4000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
-
-  async function updateAppointment(token: string, action: "completed" | "no_show") {
-    setWorkingToken(token);
-    setError(null);
-    try {
-      const response = await fetch("/api/admin/appointments", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmationToken: token, action }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "We couldn't update the appointment.");
-      setNotice(action === "completed" ? "Appointment marked completed." : "Appointment marked as no-show.");
-      await loadAppointments();
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "We couldn't update the appointment.");
-    } finally {
-      setWorkingToken(null);
-    }
-  }
-
-  async function cancelAppointment(token: string) {
-    if (!window.confirm("Cancel this appointment? The patient and therapist will receive the calendar cancellation.")) return;
-    setWorkingToken(token);
-    setError(null);
-    try {
-      const response = await fetch("/api/admin/appointments", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmationToken: token }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "We couldn't cancel the appointment.");
-      setNotice("Appointment cancelled.");
-      await loadAppointments();
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "We couldn't cancel the appointment.");
-    } finally {
-      setWorkingToken(null);
-    }
-  }
-
-  async function retryCalendarSync(appointment: AdminAppointment) {
-    setWorkingToken(appointment.confirmationToken);
-    setError(null);
-    try {
-      const response = await fetch("/api/admin/appointments", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmationToken: appointment.confirmationToken, action: "retry_calendar_sync" }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "Google Calendar sync could not be completed.");
-      setNotice("Google Calendar sync completed.");
-      await loadAppointments();
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Google Calendar sync could not be completed.");
-    } finally {
-      setWorkingToken(null);
-    }
-  }
-
-  function openReschedule(appointment: AdminAppointment) {
-    setSchedulingTarget({ confirmationToken: appointment.confirmationToken, serviceId: appointment.service.id ?? "", serviceName: appointment.service.name, patientName: appointment.patientName, patientEmail: appointment.patientEmail, timezone: appointment.timezone, startAt: appointment.startAt });
-  }
-
-  function openCreate() {
-    const timezone = appointments[0]?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata";
-    setSchedulingTarget({ serviceId: "", serviceName: "", patientName: "", patientEmail: "", timezone });
-  }
-
-  const grouped = useMemo(() => {
-    const groups = new Map<string, AdminAppointment[]>();
-    [...appointments].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()).forEach((appointment) => {
-      const key = `${appointment.timezone}:${formatDay(appointment.startAt, appointment.timezone)}`;
-      const group = groups.get(key) ?? [];
-      group.push(appointment);
-      groups.set(key, group);
-    });
-    return [...groups.values()];
-  }, [appointments]);
-
-  return <div className="space-y-6">
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-      <div className="flex-1">
-        <label htmlFor="appointment-search" className="text-sm font-medium">Search appointments</label>
-        <div className="relative mt-2 max-w-xl"><Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><input id="appointment-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Patient, email, service, or confirmation token" className="h-11 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30" /></div>
-      </div>
-      <div className="flex flex-wrap gap-2 lg:justify-end">
-        <Button onClick={openCreate}><CalendarPlus aria-hidden="true" /> New appointment</Button>
-        <Button variant="outline" className="h-11" onClick={() => void refresh()} disabled={refreshing || loading}><RefreshCw aria-hidden="true" className={refreshing ? "animate-spin" : ""} /> Refresh</Button>
-      </div>
-    </div>
-
-    {schedulingTarget && <AdminAppointmentScheduling target={schedulingTarget} onClose={() => setSchedulingTarget(null)} onSaved={(message) => { setSchedulingTarget(null); setNotice(message); void loadAppointments(); }} />}
-
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:flex">
-      <div><label htmlFor="appointment-from" className="text-sm font-medium">From</label><input id="appointment-from" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm" /></div>
-      <div><label htmlFor="appointment-to" className="text-sm font-medium">To</label><input id="appointment-to" type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm" /></div>
-      <div><label htmlFor="appointment-status" className="text-sm font-medium">Status</label><select id="appointment-status" value={status} onChange={(event) => setStatus(event.target.value as AppointmentStatus | "all")} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="all">All statuses</option>{statuses.slice(1).map((value) => <option key={value} value={value}>{value.replace("_", " ")}</option>)}</select></div>
-    </div>
-
-    {notice && <div role="status" aria-live="polite" className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-lg rounded-xl border bg-background px-4 py-3 text-sm font-medium shadow-lg">{notice}<button type="button" className="ml-3 float-right text-muted-foreground" onClick={() => setNotice(null)} aria-label="Dismiss notification">×</button></div>}
-    {error && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
-
-    {loading ? <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed"><Loader2 aria-hidden="true" className="size-5 animate-spin text-muted-foreground" /></div> : appointments.length === 0 ? <div className="rounded-2xl border border-dashed p-10 text-center"><CalendarDays aria-hidden="true" className="mx-auto size-8 text-muted-foreground" /><h2 className="mt-3 font-semibold">No appointments found</h2><p className="mt-1 text-sm text-muted-foreground">Try another date, status, or search term.</p><Button className="mt-5" onClick={openCreate}><CalendarPlus /> Create an appointment</Button></div> : grouped.map((group) => { const first = group[0]; return <section key={`${first.timezone}:${formatDay(first.startAt, first.timezone)}`}><h2 className="mb-3 text-sm font-semibold text-muted-foreground">{formatDay(first.startAt, first.timezone)} · {first.timezone}</h2><div className="space-y-3">{group.map((appointment) => { const working = workingToken === appointment.confirmationToken; const syncFailed = appointment.googleCalendar?.syncStatus === "failed"; return <article key={appointment.confirmationToken} className="rounded-2xl border bg-background p-5 shadow-xs"><div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{appointment.patientName}</span><span className="rounded-full bg-muted px-2 py-0.5 text-xs capitalize">{appointment.status.replace("_", " ")}</span></div><p className="mt-1 text-sm text-muted-foreground">{appointment.patientEmail}</p><p className="mt-3 text-sm font-medium">{appointment.service.name} · {formatDateTime(appointment.startAt, appointment.timezone)}–{new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: appointment.timezone }).format(new Date(appointment.endAt))}</p><p className="mt-1 text-xs text-muted-foreground">{appointment.timezone} · {appointment.service.durationMinutes} min · Calendar: {appointment.googleCalendar?.syncStatus ?? "unknown"}</p>{syncFailed && <p className="mt-1 text-xs text-destructive">Calendar sync: {appointment.googleCalendar?.lastSyncError ?? "Google Calendar could not be updated."}</p>}</div><div className="flex flex-wrap gap-2 xl:max-w-lg xl:justify-end"><a href={`/appointment/${appointment.confirmationToken}`} target="_blank" rel="noreferrer"><Button variant="outline"><ExternalLink aria-hidden="true" /> Manage</Button></a>{appointment.googleMeet?.joinUrl && <a href={appointment.googleMeet.joinUrl} target="_blank" rel="noreferrer"><Button variant="outline">Join Meet</Button></a>}{appointment.status === "confirmed" && <><Button variant="outline" disabled={working} onClick={() => openReschedule(appointment)}>Reschedule</Button><Button variant="outline" disabled={working} onClick={() => void updateAppointment(appointment.confirmationToken, "completed")}><Check aria-hidden="true" /> Completed</Button><Button variant="outline" disabled={working} onClick={() => void updateAppointment(appointment.confirmationToken, "no_show")}>No-show</Button><Button variant="destructive" disabled={working} onClick={() => void cancelAppointment(appointment.confirmationToken)}><X aria-hidden="true" /> Cancel</Button></>}{syncFailed && <Button variant="outline" disabled={working} onClick={() => void retryCalendarSync(appointment)}><RefreshCw aria-hidden="true" className={working ? "animate-spin" : ""} /> Retry calendar sync</Button>}</div></div></article>; })}</div></section>; })}
-  </div>;
+  useEffect(() => { const timer = window.setTimeout(() => { void loadAppointments(); }, 0); return () => window.clearTimeout(timer); }, [loadAppointments]);
+  useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(null), 4000); return () => window.clearTimeout(timer); }, [notice]);
+  async function updateAppointment(token: string, action: "completed" | "no_show") { setWorkingToken(token); setError(null); try { const response = await fetch("/api/admin/appointments", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmationToken: token, action }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "We couldn't update the appointment."); setNotice(action === "completed" ? "Appointment marked completed." : "Appointment marked as no-show."); await loadAppointments(); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "We couldn't update the appointment."); } finally { setWorkingToken(null); } }
+  async function cancelAppointment(token: string) { if (!window.confirm("Cancel this appointment? The patient and therapist will receive the calendar cancellation.")) return; setWorkingToken(token); setError(null); try { const response = await fetch("/api/admin/appointments", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmationToken: token }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "We couldn't cancel the appointment."); setNotice("Appointment cancelled."); await loadAppointments(); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "We couldn't cancel the appointment."); } finally { setWorkingToken(null); } }
+  async function retryCalendarSync(appointment: AdminAppointment) { setWorkingToken(appointment.confirmationToken); setError(null); try { const response = await fetch("/api/admin/appointments", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmationToken: appointment.confirmationToken, action: "retry_calendar_sync" }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Google Calendar sync could not be completed."); setNotice("Google Calendar sync completed."); await loadAppointments(); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Google Calendar sync could not be completed."); } finally { setWorkingToken(null); } }
+  function openReschedule(appointment: AdminAppointment) { setSchedulingTarget({ confirmationToken: appointment.confirmationToken, serviceId: appointment.service.id ?? "", serviceName: appointment.service.name, patientName: appointment.patientName, patientEmail: appointment.patientEmail, patientPhoneCountryCode: appointment.patientPhoneCountryCode, patientPhoneNumber: appointment.patientPhoneNumber, patientCountry: appointment.patientCountry, timezone: appointment.timezone, startAt: appointment.startAt }); }
+  function openCreate() { const timezone = appointments[0]?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata"; setSchedulingTarget({ serviceId: "", serviceName: "", patientName: "", patientEmail: "", patientPhoneCountryCode: "+91", patientPhoneNumber: "", patientCountry: "IN", timezone }); }
+  const grouped = useMemo(() => { const groups = new Map<string, AdminAppointment[]>(); [...appointments].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()).forEach((appointment) => { const key = `${appointment.timezone}:${formatDay(appointment.startAt, appointment.timezone)}`; const group = groups.get(key) ?? []; group.push(appointment); groups.set(key, group); }); return [...groups.values()]; }, [appointments]);
+  return <div className="space-y-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div className="flex-1"><label htmlFor="appointment-search" className="text-sm font-medium">Search appointments</label><div className="relative mt-2 max-w-xl"><Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><input id="appointment-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Patient, email, phone, country, service, or confirmation token" className="h-11 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"/></div></div><div className="flex flex-wrap gap-2 lg:justify-end"><Button onClick={openCreate}><CalendarPlus aria-hidden="true"/> New appointment</Button><Button variant="outline" className="h-11" onClick={() => void refresh()} disabled={refreshing || loading}><RefreshCw aria-hidden="true" className={refreshing ? "animate-spin" : ""}/> Refresh</Button></div></div>
+  {schedulingTarget && <AdminAppointmentScheduling target={schedulingTarget} onClose={() => setSchedulingTarget(null)} onSaved={(message) => { setSchedulingTarget(null); setNotice(message); void loadAppointments(); }}/>}<div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:flex"><div><label htmlFor="appointment-from" className="text-sm font-medium">From</label><input id="appointment-from" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"/></div><div><label htmlFor="appointment-to" className="text-sm font-medium">To</label><input id="appointment-to" type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"/></div><div><label htmlFor="appointment-status" className="text-sm font-medium">Status</label><select id="appointment-status" value={status} onChange={(event) => setStatus(event.target.value as AppointmentStatus | "all")} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="all">All statuses</option>{statuses.slice(1).map((value) => <option key={value} value={value}>{value.replace("_", " ")}</option>)}</select></div></div>
+  {notice && <div role="status" aria-live="polite" className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-lg rounded-xl border bg-background px-4 py-3 text-sm font-medium shadow-lg">{notice}<button type="button" className="ml-3 float-right text-muted-foreground" onClick={() => setNotice(null)} aria-label="Dismiss notification">×</button></div>}{error && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
+  {loading ? <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed"><Loader2 aria-hidden="true" className="size-5 animate-spin text-muted-foreground"/></div> : appointments.length === 0 ? <div className="rounded-2xl border border-dashed p-10 text-center"><CalendarDays aria-hidden="true" className="mx-auto size-8 text-muted-foreground"/><h2 className="mt-3 font-semibold">No appointments found</h2><p className="mt-1 text-sm text-muted-foreground">Try another date, status, or search term.</p><Button className="mt-5" onClick={openCreate}><CalendarPlus/> Create an appointment</Button></div> : grouped.map((group) => { const first = group[0]; return <section key={`${first.timezone}:${formatDay(first.startAt, first.timezone)}`}><h2 className="mb-3 text-sm font-semibold text-muted-foreground">{formatDay(first.startAt, first.timezone)} · {first.timezone}</h2><div className="space-y-3">{group.map((appointment) => { const working = workingToken === appointment.confirmationToken; const syncFailed = appointment.googleCalendar?.syncStatus === "failed"; const phone = appointment.patientPhoneNumber ? `${appointment.patientPhoneCountryCode ?? ""} ${appointment.patientPhoneNumber}`.trim() : null; return <article key={appointment.confirmationToken} className="rounded-2xl border bg-background p-5 shadow-xs"><div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{appointment.patientName}</span><span className="rounded-full bg-muted px-2 py-0.5 text-xs capitalize">{appointment.status.replace("_", " ")}</span></div><p className="mt-1 text-sm text-muted-foreground">{appointment.patientEmail}</p>{phone && <p className="mt-1 text-sm text-muted-foreground">{phone}</p>}{appointment.patientCountry && <p className="mt-1 text-xs text-muted-foreground">Country: {appointment.patientCountry}</p>}<p className="mt-3 text-sm font-medium">{appointment.service.name} · {formatDateTime(appointment.startAt, appointment.timezone)}–{new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: appointment.timezone }).format(new Date(appointment.endAt))}</p><p className="mt-1 text-xs text-muted-foreground">{appointment.timezone} · {appointment.service.durationMinutes} min · Calendar: {appointment.googleCalendar?.syncStatus ?? "unknown"}</p>{syncFailed && <p className="mt-1 text-xs text-destructive">Calendar sync: {appointment.googleCalendar?.lastSyncError ?? "Google Calendar could not be updated."}</p>}</div><div className="flex flex-wrap gap-2 xl:max-w-lg xl:justify-end"><a href={`/appointment/${appointment.confirmationToken}`} target="_blank" rel="noreferrer"><Button variant="outline"><ExternalLink aria-hidden="true"/> Manage</Button></a>{appointment.googleMeet?.joinUrl && <a href={appointment.googleMeet.joinUrl} target="_blank" rel="noreferrer"><Button variant="outline">Join Meet</Button></a>}{appointment.status === "confirmed" && <><Button variant="outline" disabled={working} onClick={() => openReschedule(appointment)}>Reschedule</Button><Button variant="outline" disabled={working} onClick={() => void updateAppointment(appointment.confirmationToken, "completed")}><Check aria-hidden="true"/> Completed</Button><Button variant="outline" disabled={working} onClick={() => void updateAppointment(appointment.confirmationToken, "no_show")}>No-show</Button><Button variant="destructive" disabled={working} onClick={() => void cancelAppointment(appointment.confirmationToken)}><X aria-hidden="true"/> Cancel</Button></>}{syncFailed && <Button variant="outline" disabled={working} onClick={() => void retryCalendarSync(appointment)}><RefreshCw aria-hidden="true" className={working ? "animate-spin" : ""}/> Retry calendar sync</Button>}</div></div></article>; })}</div></section>; })}</div>;
 }
