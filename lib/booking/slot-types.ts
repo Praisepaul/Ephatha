@@ -12,6 +12,8 @@ export type BookingConflict = BookingInterval & {
 
 export type BookingWindow = BookingInterval & {
   timezone: string;
+  patientBookingStartTimeIST?: string;
+  patientBookingEndTimeIST?: string;
 };
 
 export type BookingConstraints = {
