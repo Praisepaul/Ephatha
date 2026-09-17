@@ -12,7 +12,15 @@ type AvailabilityDocument = {
 };
 
 function normalizeRules(rules: AvailabilityRule[]) {
-  return rules.map((rule) => ({ ...rule, id: rule.id.trim(), startTime: rule.startTime.trim(), endTime: rule.endTime.trim(), timezone: rule.timezone.trim() }));
+  return rules.map((rule) => ({
+    ...rule,
+    id: rule.id.trim(),
+    startTime: rule.startTime.trim(),
+    endTime: rule.endTime.trim(),
+    timezone: rule.timezone.trim(),
+    patientBookingStartTimeIST: rule.patientBookingStartTimeIST?.trim() || undefined,
+    patientBookingEndTimeIST: rule.patientBookingEndTimeIST?.trim() || undefined,
+  }));
 }
 
 function normalizeExceptions(exceptions: AvailabilityException[]) {
