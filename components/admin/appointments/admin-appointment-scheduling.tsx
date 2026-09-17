@@ -4,138 +4,27 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, Check, ChevronLeft, ChevronRight, Loader2, UserPlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TimezoneSelect } from "@/components/ui/timezone-select";
+import { patientCountries } from "@/lib/booking/countries";
 import type { BookableSlot } from "@/lib/booking/slot-types";
 import type { Service } from "@/lib/config/services";
 
-export type AdminAppointmentSchedulingTarget = {
-  confirmationToken?: string;
-  serviceId: string;
-  serviceName: string;
-  patientName: string;
-  patientEmail: string;
-  timezone: string;
-  startAt?: string;
-};
-
+export type AdminAppointmentSchedulingTarget = { confirmationToken?: string; serviceId: string; serviceName: string; patientName: string; patientEmail: string; patientPhoneCountryCode?: string; patientPhoneNumber?: string; patientCountry?: string; timezone: string; startAt?: string };
 type SerializedSlot = { start: string; end: string; timezone: string; serviceId: string };
 type Props = { target: AdminAppointmentSchedulingTarget; onClose: () => void; onSaved: (message: string) => void };
-
-function getDateParts(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
-  return Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value])) as Record<string, string>;
-}
-function getUpcomingDates(timezone: string, startOffset: number, count: number) {
-  const today = getDateParts(new Date(), timezone);
-  const base = Date.UTC(Number(today.year), Number(today.month) - 1, Number(today.day));
-  return Array.from({ length: count }, (_, index) => new Date(base + (index + startOffset) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
-}
+function getDateParts(date: Date, timezone: string) { const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date); return Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value])) as Record<string, string>; }
+function getUpcomingDates(timezone: string, startOffset: number, count: number) { const today = getDateParts(new Date(), timezone); const base = Date.UTC(Number(today.year), Number(today.month) - 1, Number(today.day)); return Array.from({ length: count }, (_, index) => new Date(base + (index + startOffset) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)); }
 function formatDate(date: string, timezone: string) { return new Intl.DateTimeFormat("en", { weekday: "short", day: "numeric", month: "short", timeZone: timezone }).format(new Date(`${date}T12:00:00`)); }
 function formatTime(value: Date, timezone: string) { return new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: timezone }).format(value); }
 function dateKey(date: Date, timezone: string) { const parts = getDateParts(date, timezone); return `${parts.year}-${parts.month}-${parts.day}`; }
 
 export function AdminAppointmentScheduling({ target, onClose, onSaved }: Props) {
-  const [services, setServices] = useState<Service[]>([]);
-  const [timezone, setTimezone] = useState(target.timezone);
-  const [serviceId, setServiceId] = useState(target.serviceId);
-  const [patientName, setPatientName] = useState(target.patientName);
-  const [patientEmail, setPatientEmail] = useState(target.patientEmail);
-  const [dates, setDates] = useState<string[]>([]);
-  const [dateOffset, setDateOffset] = useState(0);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [slotsByDate, setSlotsByDate] = useState<Record<string, BookableSlot[]>>({});
-  const [selectedSlot, setSelectedSlot] = useState<BookableSlot | null>(target.startAt ? { start: new Date(target.startAt), end: new Date(target.startAt), timezone: target.timezone, serviceId: target.serviceId } : null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
+  const [services, setServices] = useState<Service[]>([]); const [timezone, setTimezone] = useState(target.timezone); const [serviceId, setServiceId] = useState(target.serviceId); const [patientName, setPatientName] = useState(target.patientName); const [patientEmail, setPatientEmail] = useState(target.patientEmail); const [patientPhoneCountryCode, setPatientPhoneCountryCode] = useState(target.patientPhoneCountryCode ?? "+91"); const [patientPhoneNumber, setPatientPhoneNumber] = useState(target.patientPhoneNumber ?? ""); const [patientCountry, setPatientCountry] = useState(target.patientCountry ?? "IN"); const [dates, setDates] = useState<string[]>([]); const [dateOffset, setDateOffset] = useState(0); const [selectedDate, setSelectedDate] = useState<string | null>(null); const [slotsByDate, setSlotsByDate] = useState<Record<string, BookableSlot[]>>({}); const [selectedSlot, setSelectedSlot] = useState<BookableSlot | null>(target.startAt ? { start: new Date(target.startAt), end: new Date(target.startAt), timezone: target.timezone, serviceId: target.serviceId } : null); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState<string | null>(null);
   const service = useMemo(() => services.find((item) => item.id === serviceId) ?? null, [services, serviceId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadServices() {
-      try {
-        const response = await fetch("/api/admin/services", { cache: "no-store" });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error ?? "We couldn't load services.");
-        if (!cancelled) setServices((data.services as Service[]).filter((item) => item.active));
-      } catch (requestError) {
-        if (!cancelled) setError(requestError instanceof Error ? requestError.message : "We couldn't load services.");
-      }
-    }
-    void loadServices();
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      if (!serviceId || !timezone) return;
-      await Promise.resolve();
-      setLoading(true);
-      const nextDates = getUpcomingDates(timezone, dateOffset, 14);
-      try {
-        const response = await fetch("/api/availability", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify({ serviceId, timezone, dates: nextDates }) });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error ?? "We couldn't check availability right now.");
-        if (cancelled) return;
-        const nextSlots = Object.fromEntries(Object.entries(data.slotsByDate as Record<string, SerializedSlot[]>).map(([date, slots]) => [date, slots.map((slot) => ({ ...slot, start: new Date(slot.start), end: new Date(slot.end) }))]));
-        setLoading(false);
-        setError(null);
-        setDates(nextDates);
-        setSlotsByDate(nextSlots);
-        setSelectedDate((current) => current && (nextSlots[current] ?? []).length > 0 ? current : nextDates.find((date) => (nextSlots[date] ?? []).length > 0) ?? null);
-        setSelectedSlot((current) => current && (nextSlots[dateKey(current.start, timezone)] ?? []).some((slot) => slot.start.getTime() === current.start.getTime()) ? current : null);
-      } catch (requestError) {
-        if (cancelled) return;
-        setLoading(false);
-        setError(requestError instanceof Error ? requestError.message : "We couldn't check availability right now.");
-        setDates(nextDates);
-        setSlotsByDate(Object.fromEntries(nextDates.map((date) => [date, []])));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [dateOffset, serviceId, timezone]);
-
-  async function saveAppointment() {
-    if (!service || !selectedSlot) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const isReschedule = Boolean(target.confirmationToken);
-      const response = await fetch("/api/admin/appointments", {
-        method: isReschedule ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(isReschedule ? { confirmationToken: target.confirmationToken, action: "reschedule", startAt: selectedSlot.start.toISOString(), timezone } : { serviceId: service.id, startAt: selectedSlot.start.toISOString(), timezone, name: patientName, email: patientEmail, idempotencyKey: crypto.randomUUID() }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "We couldn't save the appointment.");
-      onSaved(isReschedule ? "Appointment rescheduled. Calendar invitations were updated." : "Appointment created. Calendar invitations were sent when Google Calendar is connected.");
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "We couldn't save the appointment.");
-      setSelectedSlot(null);
-    } finally { setSaving(false); }
-  }
-
-  const visibleDates = dates.filter((date) => (slotsByDate[date] ?? []).length > 0);
-  const selectedSlots = selectedDate ? slotsByDate[selectedDate] ?? [] : [];
-
-  return (
-    <section className="rounded-2xl border bg-muted/20 p-5 shadow-sm sm:p-6" aria-labelledby="admin-scheduling-title">
-      <div className="flex items-start justify-between gap-4"><div><p className="text-sm font-medium text-muted-foreground">Scheduling</p><h2 id="admin-scheduling-title" className="mt-1 text-xl font-semibold">{target.confirmationToken ? "Reschedule appointment" : "Create appointment"}</h2><p className="mt-1 text-sm text-muted-foreground">Choose a time that is available. The same booking checks and calendar safeguards are used as public booking.</p></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="Close scheduling"><X /></Button></div>
-      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"><div className="space-y-4">
-        {!target.confirmationToken && <label className="block text-sm font-medium">Session type<select value={serviceId} onChange={(event) => { setServiceId(event.target.value); setSelectedSlot(null); }} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Choose a service</option>{services.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.durationMinutes} min</option>)}</select></label>}
-        <label className="block text-sm font-medium">Patient name<input value={patientName} onChange={(event) => setPatientName(event.target.value)} disabled={Boolean(target.confirmationToken)} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-70" /></label>
-        <label className="block text-sm font-medium">Patient email<input type="email" value={patientEmail} onChange={(event) => setPatientEmail(event.target.value)} disabled={Boolean(target.confirmationToken)} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-70" /></label>
-        <TimezoneSelect id="admin-appointment-timezone" value={timezone} onChange={(value) => { setTimezone(value); setSelectedDate(null); setSelectedSlot(null); }} label="Timezone" />
-        {service && <div className="rounded-xl border bg-background p-4 text-sm"><p className="font-medium">{service.name}</p><p className="mt-1 text-muted-foreground">{service.durationMinutes} minutes · {service.online ? "Online" : "In person"}</p></div>}
-      </div><div className="min-w-0 rounded-xl border bg-background p-4">
-        <div className="flex items-center justify-between gap-2"><Button variant="outline" size="icon" onClick={() => { setDateOffset((value) => Math.max(0, value - 14)); setSelectedSlot(null); }} disabled={dateOffset === 0 || loading} aria-label="Earlier dates"><ChevronLeft /></Button><p className="text-sm font-semibold">Available times</p><Button variant="outline" size="icon" onClick={() => { setDateOffset((value) => value + 14); setSelectedSlot(null); }} disabled={loading} aria-label="Later dates"><ChevronRight /></Button></div>
-        {loading ? <div className="flex min-h-48 items-center justify-center"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-label="Loading available times" /></div> : visibleDates.length === 0 ? <div className="py-12 text-center text-sm text-muted-foreground">No available times in this period. Try the next two weeks.</div> : <><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">{visibleDates.map((date) => <button key={date} type="button" onClick={() => { setSelectedDate(date); setSelectedSlot(null); }} className={`rounded-xl border px-3 py-3 text-left text-sm ${selectedDate === date ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}><span className="block font-medium">{formatDate(date, timezone)}</span><span className="mt-1 block text-xs opacity-80">{slotsByDate[date].length} time{slotsByDate[date].length === 1 ? "" : "s"}</span></button>)}</div>{selectedDate && <div className="mt-5"><p className="text-sm font-medium">Times on {formatDate(selectedDate, timezone)}</p><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{selectedSlots.map((slot) => <button key={slot.start.toISOString()} type="button" onClick={() => setSelectedSlot(slot)} className={`rounded-lg border px-3 py-2.5 text-sm font-medium ${selectedSlot?.start.getTime() === slot.start.getTime() ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{formatTime(slot.start, timezone)}</button>)}</div></div>}</>}
-      </div></div>
-      {error && <div role="alert" className="mt-5 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}
-      <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={() => void saveAppointment()} disabled={!service || !selectedSlot || saving || (!target.confirmationToken && (!patientName.trim() || !patientEmail.trim()))}>{saving ? <Loader2 className="animate-spin" /> : target.confirmationToken ? <CalendarClock /> : <UserPlus />}{saving ? "Saving…" : target.confirmationToken ? "Reschedule appointment" : "Create appointment"}</Button></div>
-      {selectedSlot && <p className="mt-3 flex items-center justify-end gap-1 text-xs text-muted-foreground"><Check className="size-3.5" /> {formatDateTimeSummary(selectedSlot.start, timezone)}{service ? ` · ${service.durationMinutes} min` : ""}</p>}
-    </section>
-  );
+  useEffect(() => { let cancelled = false; async function loadServices() { try { const response = await fetch("/api/admin/services", { cache: "no-store" }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "We couldn't load services."); if (!cancelled) setServices((data.services as Service[]).filter((item) => item.active)); } catch (requestError) { if (!cancelled) setError(requestError instanceof Error ? requestError.message : "We couldn't load services."); } } void loadServices(); return () => { cancelled = true; }; }, []);
+  useEffect(() => { let cancelled = false; void (async () => { if (!serviceId || !timezone) return; await Promise.resolve(); setLoading(true); const nextDates = getUpcomingDates(timezone, dateOffset, 14); try { const response = await fetch("/api/availability", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify({ serviceId, timezone, dates: nextDates }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "We couldn't check availability right now."); if (cancelled) return; const nextSlots = Object.fromEntries(Object.entries(data.slotsByDate as Record<string, SerializedSlot[]>).map(([date, slots]) => [date, slots.map((slot) => ({ ...slot, start: new Date(slot.start), end: new Date(slot.end) }))])); setLoading(false); setError(null); setDates(nextDates); setSlotsByDate(nextSlots); setSelectedDate((current) => current && (nextSlots[current] ?? []).length > 0 ? current : nextDates.find((date) => (nextSlots[date] ?? []).length > 0) ?? null); setSelectedSlot((current) => current && (nextSlots[dateKey(current.start, timezone)] ?? []).some((slot) => slot.start.getTime() === current.start.getTime()) ? current : null); } catch (requestError) { if (!cancelled) { setLoading(false); setError(requestError instanceof Error ? requestError.message : "We couldn't check availability right now."); setDates(nextDates); setSlotsByDate(Object.fromEntries(nextDates.map((date) => [date, []]))); } } })(); return () => { cancelled = true; }; }, [dateOffset, serviceId, timezone]);
+  async function saveAppointment() { if (!service || !selectedSlot) return; setSaving(true); setError(null); try { const isReschedule = Boolean(target.confirmationToken); const response = await fetch("/api/admin/appointments", { method: isReschedule ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(isReschedule ? { confirmationToken: target.confirmationToken, action: "reschedule", startAt: selectedSlot.start.toISOString(), timezone } : { serviceId: service.id, startAt: selectedSlot.start.toISOString(), timezone, name: patientName, email: patientEmail, phoneCountryCode: patientPhoneCountryCode, phoneNumber: patientPhoneNumber, country: patientCountry, idempotencyKey: crypto.randomUUID() }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "We couldn't save the appointment."); onSaved(isReschedule ? "Appointment rescheduled. Calendar invitations were updated." : "Appointment created. Calendar invitations were sent when Google Calendar is connected."); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "We couldn't save the appointment."); setSelectedSlot(null); } finally { setSaving(false); } }
+  const validPatientContact = /^[0-9\s().-]{5,20}$/.test(patientPhoneNumber.trim()) && patientCountries.some((country) => country.code === patientCountry) && /^\+\d{1,4}$/.test(patientPhoneCountryCode);
+  const visibleDates = dates.filter((date) => (slotsByDate[date] ?? []).length > 0); const selectedSlots = selectedDate ? slotsByDate[selectedDate] ?? [] : [];
+  return <section className="rounded-2xl border bg-muted/20 p-5 shadow-sm sm:p-6" aria-labelledby="admin-scheduling-title"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-medium text-muted-foreground">Scheduling</p><h2 id="admin-scheduling-title" className="mt-1 text-xl font-semibold">{target.confirmationToken ? "Reschedule appointment" : "Create appointment"}</h2><p className="mt-1 text-sm text-muted-foreground">Choose a time that is available. The same booking checks and calendar safeguards are used as public booking.</p></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="Close scheduling"><X /></Button></div><div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"><div className="space-y-4">{!target.confirmationToken && <label className="block text-sm font-medium">Session type<select value={serviceId} onChange={(event) => { setServiceId(event.target.value); setSelectedSlot(null); }} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Choose a service</option>{services.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.durationMinutes} min</option>)}</select></label>}<label className="block text-sm font-medium">Patient name<input value={patientName} onChange={(event) => setPatientName(event.target.value)} disabled={Boolean(target.confirmationToken)} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-70" /></label><label className="block text-sm font-medium">Patient email<input type="email" value={patientEmail} onChange={(event) => setPatientEmail(event.target.value)} disabled={Boolean(target.confirmationToken)} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-70" /></label><label className="block text-sm font-medium">Country<select value={patientCountry} disabled={Boolean(target.confirmationToken)} onChange={(event) => { const selected = patientCountries.find((country) => country.code === event.target.value); setPatientCountry(event.target.value); if (selected) setPatientPhoneCountryCode(selected.dialCode); }} className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Select country</option>{patientCountries.map((country) => <option key={country.code} value={country.code}>{country.name} ({country.dialCode})</option>)}</select></label><label className="block text-sm font-medium">Phone number<div className="mt-2 grid grid-cols-[minmax(7rem,9rem)_1fr] gap-2"><select aria-label="Phone country code" value={patientPhoneCountryCode} disabled={Boolean(target.confirmationToken)} onChange={(event) => setPatientPhoneCountryCode(event.target.value)} className="h-11 rounded-lg border border-input bg-background px-2 text-sm"><option value="">Code</option>{patientCountries.map((country) => <option key={country.code} value={country.dialCode}>{country.dialCode} · {country.name}</option>)}</select><input type="tel" inputMode="tel" autoComplete="tel-national" value={patientPhoneNumber} disabled={Boolean(target.confirmationToken)} onChange={(event) => setPatientPhoneNumber(event.target.value)} placeholder="Phone number" className="h-11 rounded-lg border border-input bg-background px-3 text-sm" /></div></label><TimezoneSelect id="admin-appointment-timezone" value={timezone} onChange={(value) => { setTimezone(value); setSelectedDate(null); setSelectedSlot(null); }} label="Timezone" />{service && <div className="rounded-xl border bg-background p-4 text-sm"><p className="font-medium">{service.name}</p><p className="mt-1 text-muted-foreground">{service.durationMinutes} minutes · {service.online ? "Online" : "In person"}</p></div>}</div><div className="min-w-0 rounded-xl border bg-background p-4"><div className="flex items-center justify-between gap-2"><Button variant="outline" size="icon" onClick={() => { setDateOffset((value) => Math.max(0, value - 14)); setSelectedSlot(null); }} disabled={dateOffset === 0 || loading} aria-label="Earlier dates"><ChevronLeft /></Button><p className="text-sm font-semibold">Available times</p><Button variant="outline" size="icon" onClick={() => { setDateOffset((value) => value + 14); setSelectedSlot(null); }} disabled={loading} aria-label="Later dates"><ChevronRight /></Button></div>{loading ? <div className="flex min-h-48 items-center justify-center"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-label="Loading available times" /></div> : visibleDates.length === 0 ? <div className="py-12 text-center text-sm text-muted-foreground">No available times in this period. Try the next two weeks.</div> : <><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">{visibleDates.map((date) => <button key={date} type="button" onClick={() => { setSelectedDate(date); setSelectedSlot(null); }} className={`rounded-xl border px-3 py-3 text-left text-sm ${selectedDate === date ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}><span className="block font-medium">{formatDate(date, timezone)}</span><span className="mt-1 block text-xs opacity-80">{slotsByDate[date].length} time{slotsByDate[date].length === 1 ? "" : "s"}</span></button>)}</div>{selectedDate && <div className="mt-5"><p className="text-sm font-medium">Times on {formatDate(selectedDate, timezone)}</p><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{selectedSlots.map((slot) => <button key={slot.start.toISOString()} type="button" onClick={() => setSelectedSlot(slot)} className={`rounded-lg border px-3 py-2.5 text-sm font-medium ${selectedSlot?.start.getTime() === slot.start.getTime() ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{formatTime(slot.start, timezone)}</button>)}</div></div>}</>}</div></div>{error && <div role="alert" className="mt-5 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</div>}<div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={() => void saveAppointment()} disabled={!service || !selectedSlot || saving || (!target.confirmationToken && (!patientName.trim() || !patientEmail.trim() || !validPatientContact))}>{saving ? <Loader2 className="animate-spin" /> : target.confirmationToken ? <CalendarClock /> : <UserPlus />}{saving ? "Saving…" : target.confirmationToken ? "Reschedule appointment" : "Create appointment"}</Button></div>{selectedSlot && <p className="mt-3 flex items-center justify-end gap-1 text-xs text-muted-foreground"><Check className="size-3.5" /> {formatDateTimeSummary(selectedSlot.start, timezone)}{service ? ` · ${service.durationMinutes} min` : ""}</p>}</section>;
 }
 function formatDateTimeSummary(value: Date, timezone: string) { return new Intl.DateTimeFormat("en", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: timezone }).format(value); }
