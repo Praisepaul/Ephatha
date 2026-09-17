@@ -47,8 +47,15 @@ function isWithinPatientBookingWindow(slotStart: Date, slotEnd: Date, window: Bo
   const slotStartMinutes = getMinutesInTimezone(slotStart, "Asia/Kolkata");
   const slotEndMinutes = getMinutesInTimezone(slotEnd, "Asia/Kolkata");
 
-  if (startMinutes < endMinutes) return slotStartMinutes >= startMinutes && slotEndMinutes <= endMinutes;
-  return (slotStartMinutes >= startMinutes && slotEndMinutes <= 24 * 60) || (slotStartMinutes >= 0 && slotEndMinutes <= endMinutes);
+  if (startMinutes < endMinutes) {
+    return slotStartMinutes >= startMinutes && slotEndMinutes >= slotStartMinutes && slotEndMinutes <= endMinutes;
+  }
+
+  const slotStartOnWindowDay = slotStartMinutes < startMinutes ? slotStartMinutes + 24 * 60 : slotStartMinutes;
+  const rawSlotEnd = slotEndMinutes < slotStartMinutes ? slotEndMinutes + 24 * 60 : slotEndMinutes;
+  const slotEndOnWindowDay = rawSlotEnd < startMinutes ? rawSlotEnd + 24 * 60 : rawSlotEnd;
+  const windowEndOnWindowDay = endMinutes + 24 * 60;
+  return slotStartOnWindowDay >= startMinutes && slotEndOnWindowDay <= windowEndOnWindowDay;
 }
 
 function createSlotsFromWindow(window: BookingWindow, request: SlotGenerationRequest): BookableSlot[] {
@@ -59,9 +66,7 @@ function createSlotsFromWindow(window: BookingWindow, request: SlotGenerationReq
     if (slotEnd > window.end) break;
     if (isWithinBookingHorizon(slotStart, request) && isWithinPatientBookingWindow(slotStart, slotEnd, window)) {
       const candidate: BookingConflictCheck = { start: slotStart, end: slotEnd, bufferBeforeMinutes: request.constraints.bufferBeforeMinutes, bufferAfterMinutes: request.constraints.bufferAfterMinutes };
-      if (findBookingConflicts(candidate, request.conflicts).length === 0) {
-        slots.push({ start: new Date(slotStart), end: new Date(slotEnd), timezone: request.timezone, serviceId: request.service.id });
-      }
+      if (findBookingConflicts(candidate, request.conflicts).length === 0) slots.push({ start: new Date(slotStart), end: new Date(slotEnd), timezone: request.timezone, serviceId: request.service.id });
     }
     slotStart = addMinutes(slotStart, request.constraints.slotIntervalMinutes);
   }
