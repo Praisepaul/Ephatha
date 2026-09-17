@@ -77,7 +77,17 @@ function readFormatState(): FormatState {
 
 function ToolbarButton({ label, icon: Icon, active = false, onClick }: { label: string; icon: typeof Bold; active?: boolean; onClick: () => void }) {
   return (
-    <Button type="button" variant="ghost" size="icon" className={`size-9 shrink-0 ${active ? "bg-accent text-accent-foreground" : ""}`} onMouseDown={(event) => event.preventDefault()} onClick={onClick} aria-label={label} title={label} aria-pressed={active}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className={`size-9 shrink-0 ${active ? "bg-accent text-accent-foreground" : ""}`}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      aria-pressed={active}
+    >
       <Icon className="size-4" aria-hidden="true" />
     </Button>
   );
@@ -86,16 +96,16 @@ function ToolbarButton({ label, icon: Icon, active = false, onClick }: { label: 
 export function RichTextEditor({ id, label, placeholder, value, onChange, maxLength = 5000 }: RichTextEditorProps) {
   const editorRef = React.useRef<HTMLDivElement>(null);
   const savedSelectionRef = React.useRef<Range | null>(null);
-  const lastValueRef = React.useRef(value);
+  const lastValueRef = React.useRef<string | null>(null);
   const [formatState, setFormatState] = React.useState<FormatState>({ block: "p", bold: false, italic: false, underline: false, strikeThrough: false });
   const characterCount = richTextToPlainText(value).length;
 
   React.useEffect(() => {
     const editor = editorRef.current;
-    if (!editor || lastValueRef.current === value || editor.innerHTML === value) return;
-    editor.innerHTML = value;
+    if (!editor || lastValueRef.current === value) return;
+    const sanitizedValue = sanitizeRichText(value);
+    if (editor.innerHTML !== sanitizedValue) editor.innerHTML = sanitizedValue;
     lastValueRef.current = value;
-    setFormatState({ block: "p", bold: false, italic: false, underline: false, strikeThrough: false });
   }, [value]);
 
   function saveSelection() {
@@ -129,7 +139,7 @@ export function RichTextEditor({ id, label, placeholder, value, onChange, maxLen
     const sanitized = sanitizeRichText(editor.innerHTML);
     const plainText = richTextToPlainText(sanitized);
     if (plainText.length > maxLength) {
-      editor.innerHTML = lastValueRef.current;
+      editor.innerHTML = lastValueRef.current ?? "";
       return;
     }
     if (editor.innerHTML !== sanitized) editor.innerHTML = sanitized;
